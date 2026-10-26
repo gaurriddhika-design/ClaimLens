@@ -3,7 +3,7 @@ import re
 
 
 class EvidenceAnalyzer:
-    """Analyze how source text relates to a factual claim."""
+    """Identify preliminary evidence signals in source text."""
 
     STOPWORDS = {
         "a", "an", "the", "is", "are", "was", "were", "be",
@@ -12,25 +12,48 @@ class EvidenceAnalyzer:
         "this", "that", "these", "those", "has", "have", "had",
         "do", "does", "did", "will", "would", "could", "should",
         "may", "might", "can", "not", "no", "true", "false",
-        "claim", "claims", "according", "reported",
+        "claim", "claims", "according", "reported", "report",
+        "accurate", "correct", "incorrect", "verified", "confirmed",
+        "misleading", "fact", "check",
     }
 
-    CONTRADICTION_MARKERS = (
-        "false",
-        "incorrect",
-        "not true",
-        "not correct",
-        "debunked",
-        "no evidence",
-        "did not happen",
-        "never happened",
-        "denied the claim",
-        "contradicts the claim",
-        "misleading claim",
+    CONTRADICTION_PATTERNS = (
+        r"\bthe claim is false\b",
+        r"\bthe claim is incorrect\b",
+        r"\bthe claim is not true\b",
+        r"\bthe claim is not correct\b",
+        r"\bthe claim was debunked\b",
+        r"\bthe claim is misleading\b",
+        r"\bno evidence (?:supports|of|for)\b",
+        r"\bdid not happen\b",
+        r"\bnever happened\b",
+        r"\bdenied the claim\b",
+        r"\bcontradicts the claim\b",
+        r"\bfalse claim\b",
+        r"\bthe claim\b.{0,150}?\b(?:is|was)\s+"
+        r"(?:false|incorrect|not true|not correct|misleading)\b",
+        r"\bthe claim that\b.{0,150}?\b(?:is|was)\s+"
+        r"(?:false|incorrect|not true|not correct|misleading)\b",
+        r"\bno such (?:ban|policy|law|event|announcement|decision)\b",
+    )
+
+    SUPPORT_PATTERNS = (
+        r"\bthe claim is true\b",
+        r"\bthe claim is accurate\b",
+        r"\bthe claim is correct\b",
+        r"\bthe claim was verified\b",
+        r"\bthe claim was confirmed\b",
+        r"\bconfirmed the claim\b",
+        r"\bverified the claim\b",
+        r"\bthe report is accurate\b",
+        r"\bthe report\b.{0,150}?\b(?:is|was)\s+"
+        r"(?:accurate|correct|verified|confirmed)\b",
+        r"\bthe claim\b.{0,150}?\b(?:is|was)\s+"
+        r"(?:true|accurate|correct|verified|confirmed)\b",
     )
 
     def _tokenize(self, text: str) -> set[str]:
-        """Convert text into normalized, meaningful words."""
+        """Normalize text into meaningful keywords."""
         words = re.findall(r"\b[a-z0-9]+\b", text.lower())
 
         return {
@@ -47,12 +70,59 @@ class EvidenceAnalyzer:
             if sentence.strip()
         ]
 
-    def analyze_source(self, claim: str, source: dict) -> dict:
-        """
-        Assess one source using basic lexical heuristics.
+    def _contains_pattern(
+        self,
+        text: str,
+        patterns: tuple[str, ...],
+    ) -> bool:
+        """Check whether text contains a recognized phrase."""
+        return any(
+            re.search(pattern, text, flags=re.IGNORECASE | re.DOTALL)
+            for pattern in patterns
+        )
 
-        This produces preliminary evidence signals, not a verdict.
+    def _get_relevant_context(
+        self,
+        text: str,
+        claim_words: set[str],
+    ) -> list[str]:
         """
+        Return sentences relevant to the claim.
+
+        Include the sentence immediately before or after a relevant
+        sentence so that a fact-check conclusion such as
+        'The claim is false' is not discarded just because it uses
+        different words from the original claim.
+        """
+        sentences = self._split_sentences(text)
+
+        relevant_indices = [
+            index
+            for index, sentence in enumerate(sentences)
+            if claim_words.intersection(self._tokenize(sentence))
+        ]
+
+        if not relevant_indices:
+            return []
+
+        included_indices = set()
+
+        for index in relevant_indices:
+            included_indices.add(index)
+
+            if index > 0:
+                included_indices.add(index - 1)
+
+            if index + 1 < len(sentences):
+                included_indices.add(index + 1)
+
+        return [
+            sentences[index]
+            for index in sorted(included_indices)
+        ]
+
+    def analyze_source(self, claim: str, source: dict) -> dict:
+        """Analyze one source and return preliminary evidence signals."""
         if not isinstance(claim, str) or not claim.strip():
             raise ValueError("Claim must be a non-empty string.")
 
@@ -64,74 +134,80 @@ class EvidenceAnalyzer:
         if not isinstance(text, str):
             raise TypeError("Source text must be a string.")
 
+        base_result = {
+            "title": source.get("title", ""),
+            "url": source.get("url", ""),
+            "method": "lexical_heuristic",
+            "warning": (
+                "Preliminary signals only. Phrase matching does not "
+                "establish factual truth or understand context."
+            ),
+        }
+
         if not text.strip():
             return {
-                "title": source.get("title", ""),
-                "url": source.get("url", ""),
+                **base_result,
                 "stance": "insufficient_information",
                 "relevant_sentences": [],
                 "overlap_score": 0.0,
-                "method": "lexical_heuristic",
-                "warning": "No source text was available.",
+                "matched_keywords": [],
             }
 
         claim_words = self._tokenize(claim)
-        source_words = self._tokenize(text)
 
         if not claim_words:
             return {
-                "title": source.get("title", ""),
-                "url": source.get("url", ""),
+                **base_result,
                 "stance": "insufficient_information",
                 "relevant_sentences": [],
                 "overlap_score": 0.0,
-                "method": "lexical_heuristic",
+                "matched_keywords": [],
                 "warning": "The claim contains no usable keywords.",
             }
 
-        shared_words = claim_words.intersection(source_words)
-        overlap_score = len(shared_words) / len(claim_words)
+        source_words = self._tokenize(text)
+        matched_keywords = claim_words.intersection(source_words)
 
-        sentences = self._split_sentences(text)
+        overlap_score = len(matched_keywords) / len(claim_words)
 
-        relevant_sentences = []
-
-        for sentence in sentences:
-            sentence_words = self._tokenize(sentence)
-
-            if claim_words.intersection(sentence_words):
-                relevant_sentences.append(sentence)
-
-        text_lower = text.lower()
-
-        has_contradiction_marker = any(
-            marker in text_lower
-            for marker in self.CONTRADICTION_MARKERS
+        relevant_sentences = self._get_relevant_context(
+            text,
+            claim_words,
         )
 
-        if overlap_score < 0.20:
+        relevant_text = " ".join(relevant_sentences)
+
+        has_contradiction = self._contains_pattern(
+            relevant_text,
+            self.CONTRADICTION_PATTERNS,
+        )
+
+        has_support = self._contains_pattern(
+            relevant_text,
+            self.SUPPORT_PATTERNS,
+        )
+
+        if not relevant_sentences or overlap_score < 0.20:
             stance = "unrelated"
-        elif has_contradiction_marker:
+        elif has_contradiction and has_support:
+            stance = "mixed"
+        elif has_contradiction:
             stance = "potential_contradiction"
+        elif has_support:
+            stance = "supports"
         else:
             stance = "needs_review"
 
         return {
-            "title": source.get("title", ""),
-            "url": source.get("url", ""),
+            **base_result,
             "stance": stance,
             "relevant_sentences": relevant_sentences[:10],
             "overlap_score": round(overlap_score, 3),
-            "matched_keywords": sorted(shared_words),
-            "method": "lexical_heuristic",
-            "warning": (
-                "Preliminary signal only. Keyword overlap and "
-                "contradiction phrases do not establish factual truth."
-            ),
+            "matched_keywords": sorted(matched_keywords),
         }
 
     def analyze(self, claim: str, sources: list[dict]) -> list[dict]:
-        """Analyze multiple sources and return their evidence signals."""
+        """Analyze multiple sources."""
         if not isinstance(sources, list):
             raise TypeError("Sources must be a list.")
 
