@@ -10,8 +10,15 @@ client = TestClient(app)
 
 def test_health_endpoint():
     response = client.get("/api/health")
+
     assert response.status_code == 200
-    assert response.json()["status"] == "healthy"
+    health = response.json()
+
+    assert health["status"] == "healthy"
+    assert health["verification_engine_integrated"] is False
+    assert "llm_provider_configured" in health
+    assert "search_provider_configured" in health
+    assert "database_configured" in health
 
 
 def test_demo_endpoint_is_explicitly_labelled():

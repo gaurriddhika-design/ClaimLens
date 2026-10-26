@@ -13,6 +13,9 @@ def health_check() -> HealthResponse:
         llm_provider_configured=bool(
             settings.llm_provider and (settings.llm_api_key or settings.llm_base_url)
         ),
-        search_provider_configured=bool(settings.search_provider and settings.search_api_key),
+        search_provider_configured=bool(
+            settings.search_provider and settings.search_api_key
+        ),
         database_configured=bool(settings.database_url),
+        verification_engine_integrated=False,
     )

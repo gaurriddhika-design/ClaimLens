@@ -34,3 +34,4 @@ class HealthResponse(BaseModel):
     llm_provider_configured: bool
     search_provider_configured: bool
     database_configured: bool
+    verification_engine_integrated: bool = False
