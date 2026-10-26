@@ -21,6 +21,15 @@ class ReportRecord(Base):
     report_json: Mapped[dict] = mapped_column(JSON, nullable=False)
 
 
+def _normalize_database_url(url: str) -> str:
+    """Normalize standard PostgreSQL URLs for the async SQLAlchemy driver."""
+    if url.startswith("postgres://"):
+        return "postgresql+asyncpg://" + url[len("postgres://"):]
+    if url.startswith("postgresql://"):
+        return "postgresql+asyncpg://" + url[len("postgresql://"):]
+    return url
+
+
 def _engine_options(url: str) -> dict:
     # SQLite doesn't accept connection-pool sizing options used by server DBs.
     if url.startswith("sqlite"):
@@ -28,7 +37,8 @@ def _engine_options(url: str) -> dict:
     return {"pool_pre_ping": True}
 
 
-engine = create_async_engine(settings.database_url, **_engine_options(settings.database_url))
+database_url = _normalize_database_url(settings.database_url)
+engine = create_async_engine(database_url, **_engine_options(database_url))
 SessionFactory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
 
