@@ -2,6 +2,8 @@
 from collections.abc import AsyncIterator
 
 from sqlalchemy import JSON, DateTime, String, Text
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -22,12 +24,29 @@ class ReportRecord(Base):
 
 
 def _normalize_database_url(url: str) -> str:
-    """Normalize standard PostgreSQL URLs for the async SQLAlchemy driver."""
-    if url.startswith("postgres://"):
-        return "postgresql+asyncpg://" + url[len("postgres://"):]
-    if url.startswith("postgresql://"):
-        return "postgresql+asyncpg://" + url[len("postgresql://"):]
-    return url
+    """Normalize PostgreSQL URLs for asyncpg without weakening TLS settings."""
+    if not url.startswith(("postgres://", "postgresql://")):
+        return url
+
+    try:
+        parsed_url = make_url(url)
+    except ArgumentError:
+        raise ValueError("Invalid PostgreSQL database URL") from None
+
+    query = dict(parsed_url.query)
+    query.pop("channel_binding", None)
+    sslmode = query.pop("sslmode", None)
+    if sslmode is not None:
+        if isinstance(sslmode, tuple) or sslmode.lower() != "require":
+            raise ValueError(
+                "Unsupported PostgreSQL sslmode; only sslmode=require is supported"
+            )
+        query["ssl"] = "require"
+
+    return parsed_url.set(
+        drivername="postgresql+asyncpg",
+        query=query,
+    ).render_as_string(hide_password=False)
 
 
 def _engine_options(url: str) -> dict:

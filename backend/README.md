@@ -64,6 +64,8 @@ The default development database URL is:
 
 The relative database path depends on the process working directory. Starting the server from the `backend` directory normally creates or uses `backend/claimlens.db`.
 
+PostgreSQL connection URLs using `postgres://` or `postgresql://` are normalized to the asyncpg driver. `sslmode=require` is translated to asyncpg's `ssl=require`, and `channel_binding` is removed because asyncpg does not support that parameter. Other `sslmode` values, including `verify-ca` and `verify-full`, are rejected rather than silently changing their TLS behavior. Set `DATABASE_URL` in the local, ignored `.env` file; never put credentials in tracked files.
+
 Reports are persisted using SQLAlchemy's asynchronous database support. Tables are created at application startup for this prototype. A migration tool such as Alembic should be introduced before production schema changes.
 
 **Do not commit local database files or environment secrets to Git.**
