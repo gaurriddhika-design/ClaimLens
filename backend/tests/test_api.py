@@ -116,18 +116,27 @@ def test_extra_request_fields_are_rejected():
     assert client.post("/api/verify", json={"text": "hello", "verdict": "SUPPORTED"}).status_code == 422
 
 
-def test_pdf_upload_returns_pending_report():
+def test_pdf_upload_returns_verified_report(monkeypatch):
+    configure_mocked_search(monkeypatch)
     buffer = BytesIO()
     with pymupdf.open() as doc:
         page = doc.new_page()
         page.insert_text((72, 72), "PDF ingestion API test")
         buffer.write(doc.tobytes())
-    response = client.post("/api/verify/pdf", files={"file": ("test.pdf", buffer.getvalue(), "application/pdf")})
+
+    response = client.post(
+        "/api/verify/pdf",
+        files={"file": ("test.pdf", buffer.getvalue(), "application/pdf")},
+    )
     assert response.status_code == 200, response.text
     report = response.json()
     assert report["input_type"] == "pdf"
-    assert report["claims"] == []
-    assert "PDF ingestion API test" in report["input_summary"]
+    assert report["total_claims"] == 1
+    assert len(report["claims"]) == 1
+    assert report["processing_status"] == "completed"
+    assert any(event["event_type"] == "verification_completed"
+               for event in report["audit_events"])
+
 
 
 def test_pdf_upload_rejects_wrong_file_type():
@@ -271,16 +280,61 @@ def test_unknown_report_id_returns_404():
     assert response.json()["detail"] == "Report not found."
 
 
-def test_pdf_intake_report_is_persisted():
+def test_pdf_verification_report_is_persisted(monkeypatch):
+    configure_mocked_search(monkeypatch)
     buffer = BytesIO()
     with pymupdf.open() as doc:
         page = doc.new_page()
         page.insert_text((72, 72), "Persistent PDF report")
         buffer.write(doc.tobytes())
-    submitted = client.post("/api/verify/pdf", files={"file": ("persist.pdf", buffer.getvalue(), "application/pdf")})
+
+    submitted = client.post(
+        "/api/verify/pdf",
+        files={"file": ("persist.pdf", buffer.getvalue(), "application/pdf")},
+    )
     assert submitted.status_code == 200, submitted.text
-    report_id = submitted.json()["report_id"]
-    retrieved = client.get(f"/api/reports/{report_id}")
-    assert retrieved.status_code == 200
-    assert retrieved.json()["input_type"] == "pdf"
-    assert "Persistent PDF report" in retrieved.json()["input_summary"]
+    report = submitted.json()
+    assert report["input_type"] == "pdf"
+    assert report["total_claims"] == 1
+
+    retrieved = client.get(f"/api/reports/{report['report_id']}")
+    assert retrieved.status_code == 200, retrieved.text
+    saved = retrieved.json()
+    assert saved["report_id"] == report["report_id"]
+    assert saved["input_type"] == "pdf"
+    assert saved["total_claims"] == 1
+    assert len(saved["claims"]) == 1
+
+
+def test_url_verification_uses_engine_and_preserves_input_type(monkeypatch):
+    from app.services.ingestion import IngestedDocument
+
+    configure_mocked_search(monkeypatch)
+
+    async def fake_ingest_url(url):
+        return IngestedDocument(
+            input_type="url",
+            text="The Earth orbits the Sun once every year.",
+            summary="Extracted test page text",
+            source_url=url,
+        )
+
+    monkeypatch.setattr("app.api.verification.ingest_url", fake_ingest_url)
+
+    response = client.post(
+        "/api/verify/url",
+        json={"url": "https://example.com/article"},
+    )
+    assert response.status_code == 200, response.text
+    report = response.json()
+    assert report["input_type"] == "url"
+    assert report["total_claims"] == 1
+    assert len(report["claims"]) == 1
+    assert any(
+        event["event_type"] == "verification_completed"
+        for event in report["audit_events"]
+    )
+    assert any(
+        "https://example.com/article" in event["details"]
+        for event in report["audit_events"]
+    )

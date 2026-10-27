@@ -189,7 +189,7 @@ def build_verified_report(
 
     return ReportResponse(
         report_id=str(uuid4()),
-        input_type="text",
+        input_type=document.input_type,
         input_summary=document.summary,
         created_at=now,
         processing_status="completed",
@@ -204,7 +204,20 @@ def build_verified_report(
             AuditEvent(
                 event_type="input_received",
                 occurred_at=now,
-                details=f"Text input received; {len(document.text)} characters available.",
+                details=(
+                    f"{document.input_type.upper()} input received; "
+                    f"{len(document.text)} characters available."
+                    + (
+                        f" PDF pages: {document.page_count}."
+                        if document.page_count is not None
+                        else ""
+                    )
+                    + (
+                        f" Source URL: {document.source_url}"
+                        if document.source_url
+                        else ""
+                    )
+                ),
             ),
             AuditEvent(
                 event_type="verification_completed",

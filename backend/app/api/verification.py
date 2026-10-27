@@ -1,5 +1,3 @@
-from datetime import datetime, timezone
-from uuid import uuid4
 
 import httpx
 from fastapi import APIRouter, File, HTTPException, UploadFile
@@ -33,41 +31,6 @@ class URLVerificationRequest(BaseModel):
     url: str = Field(min_length=1, max_length=2048)
 
 
-def _pending_report(document: IngestedDocument) -> ReportResponse:
-    """Build an intake-only report; no claim verification is performed here."""
-    now = datetime.now(timezone.utc)
-    details = f"Input extracted and validated; {len(document.text)} characters available."
-    if document.page_count is not None:
-        details += f" PDF pages: {document.page_count}."
-    if document.source_url:
-        details += f" Source URL: {document.source_url}"
-    return ReportResponse(
-        report_id=str(uuid4()),
-        input_type=document.input_type,
-        input_summary=document.summary,
-        created_at=now,
-        processing_status="completed",
-        overall_summary=(
-            "Input ingestion completed. Factual verification has not run for this "
-            "PDF or URL intake route."
-        ),
-        total_claims=0,
-        verdict_counts=empty_verdict_counts(),
-        claims=[],
-        evidence=[],
-        audit_events=[AuditEvent(
-            event_type="input_ingested",
-            occurred_at=now,
-            details=details + " No factual assessment was performed.",
-        )],
-    )
-
-
-async def _persist_intake_report(document: IngestedDocument) -> ReportResponse:
-    report = _pending_report(document)
-    return await save_report(report)
-
-
 def _map_ingestion_error(exc: Exception) -> HTTPException:
     if isinstance(exc, (ValueError, UnsafeURLError)):
         return HTTPException(status_code=422, detail=str(exc))
@@ -80,10 +43,9 @@ def _map_ingestion_error(exc: Exception) -> HTTPException:
     return HTTPException(status_code=500, detail="Input ingestion failed.")
 
 
-@router.post("/api/verify", response_model=ReportResponse)
-async def submit_text_for_verification(payload: TextVerificationRequest) -> ReportResponse:
+async def _verify_document(document: IngestedDocument) -> ReportResponse:
+    """Run any supported input through the same verification engine."""
     try:
-        document = ingest_text(payload.text)
         validate_claim_text(document.text)
     except ValueError as exc:
         raise _map_ingestion_error(exc) from exc
@@ -91,7 +53,7 @@ async def submit_text_for_verification(payload: TextVerificationRequest) -> Repo
     if not settings.search_provider_is_configured:
         raise HTTPException(
             status_code=503,
-            detail="Text verification is unavailable; configure the Tavily search provider.",
+            detail="Verification is unavailable; configure the Tavily search provider.",
         )
 
     try:
@@ -99,7 +61,7 @@ async def submit_text_for_verification(payload: TextVerificationRequest) -> Repo
     except SearchServiceError as exc:
         raise HTTPException(
             status_code=503,
-            detail="Text verification is unavailable; configure the Tavily search provider.",
+            detail="Verification is unavailable; configure the Tavily search provider.",
         ) from exc
 
     verification_service = VerificationService(
@@ -123,7 +85,17 @@ async def submit_text_for_verification(payload: TextVerificationRequest) -> Repo
             status_code=502,
             detail="The verification engine returned an unusable result; no report was saved.",
         ) from exc
+
     return await save_report(report)
+
+
+@router.post("/api/verify", response_model=ReportResponse)
+async def submit_text_for_verification(payload: TextVerificationRequest) -> ReportResponse:
+    try:
+        document = ingest_text(payload.text)
+    except ValueError as exc:
+        raise _map_ingestion_error(exc) from exc
+    return await _verify_document(document)
 
 
 @router.post("/api/verify/pdf", response_model=ReportResponse)
@@ -134,7 +106,7 @@ async def submit_pdf_for_verification(file: UploadFile = File(...)) -> ReportRes
         raise _map_ingestion_error(exc) from exc
     finally:
         await file.close()
-    return await _persist_intake_report(document)
+    return await _verify_document(document)
 
 
 @router.post("/api/verify/url", response_model=ReportResponse)
@@ -143,7 +115,7 @@ async def submit_url_for_verification(payload: URLVerificationRequest) -> Report
         document = await ingest_url(payload.url)
     except (ValueError, UnsafeURLError, httpx.HTTPError) as exc:
         raise _map_ingestion_error(exc) from exc
-    return await _persist_intake_report(document)
+    return await _verify_document(document)
 
 
 @router.get("/api/reports/{report_id}", response_model=ReportResponse, tags=["reports"])
