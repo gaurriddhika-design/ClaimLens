@@ -4,13 +4,21 @@ from uuid import uuid4
 import httpx
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel, ConfigDict, Field
+from starlette.concurrency import run_in_threadpool
 
 from ..core.config import settings
 from ..schemas import AuditEvent, ReportResponse
+from ..services.verification_engine import (
+    build_verified_report,
+    validate_claim_text,
+)
 from ..services.ingestion import IngestedDocument, ingest_pdf, ingest_text, ingest_url
 from ..services.report_service import empty_verdict_counts
 from ..utils.url_safety import UnsafeURLError
 from ..storage.repository import get_report, save_report
+from services.search_service import SearchService, SearchServiceError
+from services.source_fetcher import SourceFetcher
+from services.verification_service import VerificationService
 
 router = APIRouter(tags=["verification"])
 
@@ -40,8 +48,8 @@ def _pending_report(document: IngestedDocument) -> ReportResponse:
         created_at=now,
         processing_status="completed",
         overall_summary=(
-            "Input ingestion completed. Factual verification has not run because "
-            "the separate verification engine is not connected yet."
+            "Input ingestion completed. Factual verification has not run for this "
+            "PDF or URL intake route."
         ),
         total_claims=0,
         verdict_counts=empty_verdict_counts(),
@@ -76,9 +84,46 @@ def _map_ingestion_error(exc: Exception) -> HTTPException:
 async def submit_text_for_verification(payload: TextVerificationRequest) -> ReportResponse:
     try:
         document = ingest_text(payload.text)
+        validate_claim_text(document.text)
     except ValueError as exc:
         raise _map_ingestion_error(exc) from exc
-    return await _persist_intake_report(document)
+
+    if not settings.search_provider_is_configured:
+        raise HTTPException(
+            status_code=503,
+            detail="Text verification is unavailable; configure the Tavily search provider.",
+        )
+
+    try:
+        search_service = SearchService(api_key=settings.configured_search_api_key)
+    except SearchServiceError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Text verification is unavailable; configure the Tavily search provider.",
+        ) from exc
+
+    verification_service = VerificationService(
+        search_service=search_service,
+        source_fetcher=SourceFetcher(),
+    )
+    try:
+        result = await run_in_threadpool(verification_service.verify, document.text)
+    except ValueError as exc:
+        raise _map_ingestion_error(exc) from exc
+    except SearchServiceError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="The search provider failed; no verdict was generated.",
+        ) from exc
+
+    try:
+        report = build_verified_report(document, result)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="The verification engine returned an unusable result; no report was saved.",
+        ) from exc
+    return await save_report(report)
 
 
 @router.post("/api/verify/pdf", response_model=ReportResponse)

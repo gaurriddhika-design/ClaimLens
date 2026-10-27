@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     llm_base_url: str = ""
     search_provider: str = ""
     search_api_key: str = ""
+    tavily_api_key: str = ""
     database_url: str = "sqlite+aiosqlite:///./claimlens.db"
     frontend_api_url: str = "http://localhost:3000"
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
@@ -31,6 +32,18 @@ class Settings(BaseSettings):
     @cached_property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def configured_search_api_key(self) -> str:
+        """Prefer the configured search key and retain Tavily's legacy env name."""
+        return self.search_api_key.strip() or self.tavily_api_key.strip()
+
+    @property
+    def search_provider_is_configured(self) -> bool:
+        provider = self.search_provider.strip().lower()
+        if not provider and self.tavily_api_key.strip():
+            provider = "tavily"
+        return provider == "tavily" and bool(self.configured_search_api_key)
 
 
 settings = Settings()

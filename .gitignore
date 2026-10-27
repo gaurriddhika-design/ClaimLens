@@ -1,18 +1,22 @@
-﻿# Python
+# Python
 __pycache__/
 *.py[cod]
-.pytest_cache/
-.coverage
-htmlcov/
+*$py.class
 
 # Virtual environments
 .venv/
 venv/
+env/
 
 # Environment secrets
 .env
 .env.*
 !.env.example
+
+# Testing and coverage
+.pytest_cache/
+.coverage
+htmlcov/
 
 # Local databases
 *.db
@@ -22,3 +26,11 @@ venv/
 # Generated build files
 build/
 dist/
+
+# IDE and editor files
+.vscode/
+.idea/
+
+# Operating system files
+.DS_Store
+Thumbs.db

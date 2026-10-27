@@ -1,8 +1,8 @@
 # ClaimLens Backend
 
-ClaimLens accepts text, selectable-text PDFs, and URLs for claim-verification workflows. The backend currently implements input ingestion, validation, report persistence, and report retrieval.
+ClaimLens accepts text, selectable-text PDFs, and URLs. Text verification invokes the Member 3 search and lexical-analysis engine; PDF and URL requests currently validate and persist intake reports only.
 
-**Current limitation:** Reports are intake records, not completed factual verifications. The AI verification engine, live evidence retrieval, claim-level analysis, and verdict generation are not integrated yet.
+**Important limitation:** Engine verdicts are heuristic results, not definitive fact-checks. Human review of source authority, context, and corroboration is required.
 
 ## API Endpoints
 
@@ -17,7 +17,7 @@ ClaimLens accepts text, selectable-text PDFs, and URLs for claim-verification wo
 
 ## Request Examples
 
-### Text verification intake
+### Text verification
 
 `POST /api/verify`
 
@@ -39,7 +39,7 @@ ClaimLens accepts text, selectable-text PDFs, and URLs for claim-verification wo
 
 For PDF ingestion, submit a multipart form upload using the field name `file`.
 
-Successful ingestion requests save a report and return its ID. Use that ID with `GET /api/reports/{report_id}` to retrieve the saved report. A completed intake operation does not mean the submitted claims have been fact-checked.
+Successful text verification saves a report and returns its ID. PDF and URL intake requests also save reports, but do not invoke the verification engine. Use the ID with `GET /api/reports/{report_id}` to retrieve the saved report.
 
 ## Setup — Windows PowerShell
 
@@ -49,10 +49,12 @@ Run these commands from the repository root:
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r .\backend\requirements.txt
 cd .\backend
-python -m uvicorn app.main:app --reload
+python -m uvicorn backend.app.main:app --app-dir .. --reload
 ```
 
 If the virtual environment is already active, skip the activation command.
+
+Text verification requires the Tavily provider and API key. Set `SEARCH_PROVIDER=tavily` and `SEARCH_API_KEY` in the local, ignored `.env` file. For compatibility, `TAVILY_API_KEY` is also accepted when `SEARCH_PROVIDER` is unset. Provider credentials are never included in API responses or report audit events.
 
 Open `http://127.0.0.1:8000/docs` to explore and test the API.
 
@@ -88,8 +90,8 @@ The backend configuration includes limits for upload size, PDF page count, input
 - OCR for scanned PDFs is not implemented.
 - URL validation reduces server-side request forgery (SSRF) risk, but additional protections are required before production deployment. DNS rebinding and changes in network resolution require defense-in-depth, such as outbound network restrictions or connection-level destination enforcement.
 
-## Integration Boundary
+## Verification Limitations
 
-This backend provides the ingestion and persistence foundation for the next integration stage. The AI verification engine and its evidence retrieval, claim-level analysis, and verdict generation must be integrated separately.
+The verification engine uses basic lexical heuristics for evidence analysis. Source-quality indicators are not truth probabilities, and search ranking scores are not treated as evidence of truth. Unknown engine verdict labels conservatively map to `UNVERIFIED`. Fetch failures may leave only weaker search-snippet evidence.
 
-Until that integration is complete, reports must not be presented as fact-checked results.
+PDF and URL ingestion remain intake-only. Reports from those endpoints must not be presented as verified results.
