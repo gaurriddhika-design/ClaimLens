@@ -1,25 +1,50 @@
 # ClaimLens Backend
 
-ClaimLens accepts text, selectable-text PDFs, and URLs. Text verification invokes the Member 3 search and lexical-analysis engine; PDF and URL requests currently validate and persist intake reports only.
+FastAPI backend integrating text, PDF, and URL submissions with the ClaimLens verification engine and persistent reports.
 
-**Important limitation:** Engine verdicts are heuristic results, not definitive fact-checks. Human review of source authority, context, and corroboration is required.
-
-## API Endpoints
+## Endpoints
 
 | Method | Endpoint | Purpose |
 |---|---|---|
-| GET | `/api/health` | Service and configuration status |
-| POST | `/api/demo` | Return a static demo report |
-| POST | `/api/verify` | Accept text submitted as JSON |
-| POST | `/api/verify/pdf` | Accept a PDF file upload |
-| POST | `/api/verify/url` | Fetch and extract text from a URL |
-| GET | `/api/reports/{report_id}` | Retrieve a previously saved report |
+| GET | `/api/health` | Service and integration status |
+| POST | `/api/demo` | Static demo report; does not verify a claim |
+| POST | `/api/verify` | Verify submitted text |
+| POST | `/api/verify/pdf` | Extract PDF text and verify it |
+| POST | `/api/verify/url` | Extract URL text and verify it |
+| GET | `/api/reports/{report_id}` | Retrieve a saved report |
 
-## Request Examples
+Scanned PDFs requiring OCR are not supported by the current ingestion flow.
 
-### Text verification
+## Requirements and configuration
 
-`POST /api/verify`
+Use the repository virtual environment and install dependencies from the repository root:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r .\backend\requirements.txt
+```
+
+Create `backend/.env` locally. Never commit credentials. Example:
+
+```dotenv
+DATABASE_URL=sqlite+aiosqlite:///./claimlens.db
+SEARCH_PROVIDER=tavily
+TAVILY_API_KEY=your_tavily_api_key
+```
+
+Check `backend/app/core/config.py` for exact environment-variable precedence. A valid Tavily configuration is required for live verification. The relative SQLite path depends on the server working directory.
+
+## Start the API
+
+From the repository root:
+
+```powershell
+Set-Location .\backend
+..\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
+```
+
+## Example requests
+
+Text: `POST /api/verify`, JSON body:
 
 ```json
 {
@@ -27,9 +52,7 @@ ClaimLens accepts text, selectable-text PDFs, and URLs. Text verification invoke
 }
 ```
 
-### URL verification intake
-
-`POST /api/verify/url`
+URL: `POST /api/verify/url`, JSON body:
 
 ```json
 {
@@ -37,61 +60,78 @@ ClaimLens accepts text, selectable-text PDFs, and URLs. Text verification invoke
 }
 ```
 
-For PDF ingestion, submit a multipart form upload using the field name `file`.
+PDF: `POST /api/verify/pdf` using `multipart/form-data` with the upload field named `file`.
 
-Successful text verification saves a report and returns its ID. PDF and URL intake requests also save reports, but do not invoke the verification engine. Use the ID with `GET /api/reports/{report_id}` to retrieve the saved report.
+Use the returned report ID with `GET /api/reports/{report_id}`.
 
-## Setup — Windows PowerShell
+## Verification flow
 
-Run these commands from the repository root:
+The API validates and ingests input, calls the Member 3 verification engine, maps its output into the API report schema, and persists the report. The engine cleans the claim, searches Tavily, retrieves source pages or falls back to search snippets, analyzes evidence using lexical heuristics, scores observable source-quality indicators, and generates a cautious verdict.
 
-```powershell
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r .\backend\requirements.txt
-cd .\backend
-python -m uvicorn backend.app.main:app --app-dir .. --reload
-```
+**Verdicts are heuristic assessments, not definitive fact-checks.** Source scores are not probabilities of truth; human review and independent corroboration are necessary.
 
-If the virtual environment is already active, skip the activation command.
+## Frontend integration
 
-Text verification requires the Tavily provider and API key. Set `SEARCH_PROVIDER=tavily` and `SEARCH_API_KEY` in the local, ignored `.env` file. For compatibility, `TAVILY_API_KEY` is also accepted when `SEARCH_PROVIDER` is unset. Provider credentials are never included in API responses or report audit events.
+- Local API base URL: `http://127.0.0.1:8000`.
+- Send JSON for text and URL requests.
+- Send PDF files as multipart form data; let the HTTP client set the multipart boundary.
+- Handle non-2xx responses, including validation failures, unavailable search configuration, and upstream search failures.
+- Use the report response's verdict, evidence, confidence, and limitations fields rather than inventing client-side results.
+- Confirm exact response fields in `backend/app/schemas/` and `/docs`.
+- Local CORS origins are configured in `backend/app/core/config.py`.
 
-Open `http://127.0.0.1:8000/docs` to explore and test the API.
+## Persistence
 
-## Database and Persistence
+SQLAlchemy's async database layer stores reports. The prototype creates tables at application startup; introduce managed migrations such as Alembic before production schema changes. PostgreSQL URLs are normalized for asyncpg compatibility in `backend/app/storage/database.py`.
 
-The default development database URL is:
 
-`sqlite+aiosqlite:///./claimlens.db`
+## Tests
 
-The relative database path depends on the process working directory. Starting the server from the `backend` directory normally creates or uses `backend/claimlens.db`.
-
-PostgreSQL connection URLs using `postgres://` or `postgresql://` are normalized to the asyncpg driver. `sslmode=require` is translated to asyncpg's `ssl=require`, and `channel_binding` is removed because asyncpg does not support that parameter. Other `sslmode` values, including `verify-ca` and `verify-full`, are rejected rather than silently changing their TLS behavior. Set `DATABASE_URL` in the local, ignored `.env` file; never put credentials in tracked files.
-
-Reports are persisted using SQLAlchemy's asynchronous database support. Tables are created at application startup for this prototype. A migration tool such as Alembic should be introduced before production schema changes.
-
-**Do not commit local database files or environment secrets to Git.**
-
-## Running Tests
-
-From the repository root, with the virtual environment activated:
+Run from the repository root. The isolated SQLite URL prevents tests from depending on Neon:
 
 ```powershell
-python -m pytest .\backend\tests -q
+# Save existing environment values.
+$oldPythonPath = $env:PYTHONPATH
+$oldDatabaseUrl = $env:DATABASE_URL
+
+try {
+    $env:PYTHONPATH = (Get-Location).Path
+    $env:DATABASE_URL = "sqlite+aiosqlite:///./claimlens_test.db"
+
+    Push-Location .\backend
+    try {
+        ..\.venv\Scripts\python.exe -m pytest -q
+        $testExit = $LASTEXITCODE
+    }
+    finally {
+        Pop-Location
+    }
+
+    if ($testExit -ne 0) {
+        throw "Backend tests failed with exit code $testExit."
+    }
+}
+finally {
+    # Restore the original environment values.
+    if ($null -eq $oldPythonPath) {
+        Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
+    } else {
+        $env:PYTHONPATH = $oldPythonPath
+    }
+
+    if ($null -eq $oldDatabaseUrl) {
+        Remove-Item Env:DATABASE_URL -ErrorAction SilentlyContinue
+    } else {
+        $env:DATABASE_URL = $oldDatabaseUrl
+    }
+}
 ```
 
-## Input Limits and Security
 
-The backend configuration includes limits for upload size, PDF page count, input text length, URL response size, and request timeouts.
+## Security and limitations
 
-- PDF uploads are validated and checked against page-count and extracted-text limits.
-- URL ingestion restricts protocols, rejects credentials and localhost names, checks resolved IP addresses, revalidates redirects, limits redirects, and bounds streamed response size.
-- URL text extraction is heuristic and is not a full article-quality extraction algorithm.
-- OCR for scanned PDFs is not implemented.
-- URL validation reduces server-side request forgery (SSRF) risk, but additional protections are required before production deployment. DNS rebinding and changes in network resolution require defense-in-depth, such as outbound network restrictions or connection-level destination enforcement.
-
-## Verification Limitations
-
-The verification engine uses basic lexical heuristics for evidence analysis. Source-quality indicators are not truth probabilities, and search ranking scores are not treated as evidence of truth. Unknown engine verdict labels conservatively map to `UNVERIFIED`. Fetch failures may leave only weaker search-snippet evidence.
-
-PDF and URL ingestion remain intake-only. Reports from those endpoints must not be presented as verified results.
+- Input size, PDF page count, text length, and request time are bounded by backend settings.
+- URL protections reduce SSRF risk but need defense-in-depth, including network-level egress restrictions, before production deployment.
+- Source extraction and evidence matching are heuristic; fetched text may be incomplete or misleading.
+- Failed page fetches can leave only weaker search-snippet evidence.
+- Authentication, rate limiting, operational monitoring, and production deployment hardening remain separate production-readiness tasks.
