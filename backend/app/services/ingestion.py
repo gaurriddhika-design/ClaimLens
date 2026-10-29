@@ -3,6 +3,7 @@
 This module extracts and validates input only. It does not verify claims or invent
 factual conclusions; the separate verification engine will consume IngestedDocument.
 """
+from .pdf_service import extract_pdf_text
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from io import BytesIO
@@ -68,32 +69,66 @@ def ingest_text(text: str) -> IngestedDocument:
 
 async def ingest_pdf(upload: UploadFile) -> IngestedDocument:
     name = (upload.filename or "").lower()
+
     if not name.endswith(".pdf"):
         raise ValueError("Upload must have a .pdf filename.")
+
     max_bytes = settings.max_upload_mb * 1024 * 1024
     content = await upload.read(max_bytes + 1)
+
     if len(content) > max_bytes:
-        raise ValueError(f"PDF exceeds the {settings.max_upload_mb} MB upload limit.")
+        raise ValueError(
+            f"PDF exceeds the {settings.max_upload_mb} MB upload limit."
+        )
+
     if not content.startswith(b"%PDF-"):
-        raise ValueError("Uploaded file does not appear to be a valid PDF.")
+        raise ValueError(
+            "Uploaded file does not appear to be a valid PDF."
+        )
+
     try:
-        with pymupdf.open(stream=BytesIO(content), filetype="pdf") as document:
+        with pymupdf.open(
+            stream=BytesIO(content),
+            filetype="pdf"
+        ) as document:
             if document.is_encrypted:
-                raise ValueError("Password-protected PDFs are not supported.")
-            if document.page_count == 0:
-                raise ValueError("PDF contains no pages.")
-            if document.page_count > settings.max_pdf_pages:
-                raise ValueError(f"PDF exceeds the {settings.max_pdf_pages}-page limit.")
-            chunks = [page.get_text("text") for page in document]
-            text = clean_text("\n\n".join(chunks))
+                raise ValueError(
+                    "Password-protected PDFs are not supported."
+                )
+
             page_count = document.page_count
+
+            if page_count == 0:
+                raise ValueError("PDF contains no pages.")
+
+            if page_count > settings.max_pdf_pages:
+                raise ValueError(
+                    f"PDF exceeds the {settings.max_pdf_pages}-page limit."
+                )
+
+        text = extract_pdf_text(content)
+        text = clean_text(text)
+
+    except ValueError:
+        raise
     except pymupdf.FileDataError as exc:
         raise ValueError("PDF could not be read.") from exc
+
     if not text:
-        raise ValueError("No selectable text was found in this PDF. Scanned-PDF OCR is not implemented yet.")
+        raise ValueError("No readable text was extracted from this PDF.")
+
     if len(text) > settings.max_text_chars:
-        raise ValueError(f"Extracted PDF text exceeds the {settings.max_text_chars}-character limit.")
-    return IngestedDocument("pdf", text, text[:240], page_count=page_count)
+        raise ValueError(
+            f"Extracted PDF text exceeds the "
+            f"{settings.max_text_chars}-character limit."
+        )
+
+    return IngestedDocument(
+        "pdf",
+        text,
+        text[:240],
+        page_count=page_count
+    )
 
 
 async def ingest_url(url: str) -> IngestedDocument:
