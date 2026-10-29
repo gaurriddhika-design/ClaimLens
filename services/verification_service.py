@@ -97,6 +97,7 @@ class VerificationService:
         print("Sources analyzed:", len(analyzed_sources))
 
         for index, source in enumerate(analyzed_sources, start=1):
+            print("Analysis method:", source.get("method"))
             print(f"\nSource {index}:")
             print("Title:", source.get("title"))
             print("URL:", source.get("url"))
