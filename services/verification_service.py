@@ -18,6 +18,7 @@ class VerificationService:
         source_scorer=None,
         verdict_engine=None,
     ):
+        
         # Dependency injection lets us replace services in unit tests.
         self.claim_extractor = ClaimExtractor()
         self.search_service = search_service or SearchService()
