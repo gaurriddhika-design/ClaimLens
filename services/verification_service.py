@@ -1,4 +1,3 @@
-
 from services.claim_extractor import ClaimExtractor
 from services.search_service import SearchService, SearchServiceError
 from services.source_fetcher import SourceFetcher, SourceFetcherError
@@ -18,8 +17,6 @@ class VerificationService:
         source_scorer=None,
         verdict_engine=None,
     ):
-        
-        # Dependency injection lets us replace services in unit tests.
         self.claim_extractor = ClaimExtractor()
         self.search_service = search_service or SearchService()
         self.source_fetcher = source_fetcher or SourceFetcher()
@@ -35,10 +32,8 @@ class VerificationService:
     ) -> dict:
         """Verify a submitted claim and return its evidence and verdict."""
 
-        # Step 1: Clean and validate the submitted claim.
         claim = self.claim_extractor.extract_claim(submitted_text)
 
-        # Step 2: Find candidate webpages.
         search_results = self.search_service.search(
             claim,
             max_results=max_results,
@@ -47,7 +42,6 @@ class VerificationService:
         analyzed_sources = []
         fetch_failures = []
 
-        # Step 3: Fetch and analyze each candidate source.
         for result in search_results:
             url = result.get("url", "")
             source_content = None
@@ -63,8 +57,6 @@ class VerificationService:
                     "reason": fetch_error,
                 })
 
-            # If fetching fails, use the search result snippet as a
-            # fallback. A snippet is weaker evidence than full page text.
             if source_content is None:
                 source_content = {
                     "url": url,
@@ -74,20 +66,17 @@ class VerificationService:
                     "published_date": result.get("published_date"),
                 }
 
-            # Preserve the search provider's relevance score separately.
             source_content["search_score"] = result.get("score")
             source_content["fetch_error"] = fetch_error
             source_content["content_origin"] = (
                 "webpage" if fetch_error is None else "search_snippet"
             )
 
-            # Step 4: Analyze the source's relationship to the claim.
             analysis = self.evidence_analyzer.analyze_source(
                 claim,
                 source_content,
             )
 
-            # Step 5: Score observable source-quality indicators.
             quality = self.source_scorer.score_source(source_content)
 
             analyzed_sources.append({
@@ -101,12 +90,37 @@ class VerificationService:
                 "fetched_at": source_content.get("fetched_at"),
             })
 
-        # Step 6: Generate a cautious claim-level verdict.
+        # DEBUG: inspect search results and evidence analysis.
+        print("\n========== CLAIMLENS SOURCE DEBUG ==========")
+        print("Claim:", claim)
+        print("Search results received:", len(search_results))
+        print("Sources analyzed:", len(analyzed_sources))
+
+        for index, source in enumerate(analyzed_sources, start=1):
+            print(f"\nSource {index}:")
+            print("Title:", source.get("title"))
+            print("URL:", source.get("url"))
+            print("Stance:", source.get("stance"))
+            print("Quality score:", source.get("quality_score"))
+            print("Overlap score:", source.get("overlap_score"))
+            print("Matched keywords:", source.get("matched_keywords"))
+            print("Content origin:", source.get("content_origin"))
+            print("Fetch error:", source.get("fetch_error"))
+
+        print("============================================\n")
+
+        # Step 6: Generate the verdict from analyzed evidence.
         verdict = self.verdict_engine.generate_verdict(
             claim=claim,
             evidence=analyzed_sources,
             claim_type=claim_type,
         )
+
+        print("FINAL VERDICT:", verdict.get("verdict"))
+        print("VERDICT REASON:", verdict.get("reason"))
+        print("SUPPORTING SOURCES:", len(verdict.get("supporting_sources", [])))
+        print("CONTRADICTING SOURCES:", len(verdict.get("contradicting_sources", [])))
+        print()
 
         limitations = list(verdict["limitations"])
 

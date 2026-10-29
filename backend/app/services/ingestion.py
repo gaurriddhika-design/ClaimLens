@@ -3,6 +3,9 @@
 This module extracts and validates input only. It does not verify claims or invent
 factual conclusions; the separate verification engine will consume IngestedDocument.
 """
+
+from PIL import Image, UnidentifiedImageError
+import pytesseract
 from .pdf_service import extract_pdf_text
 from dataclasses import dataclass
 from html.parser import HTMLParser
@@ -129,6 +132,49 @@ async def ingest_pdf(upload: UploadFile) -> IngestedDocument:
         text[:240],
         page_count=page_count
     )
+
+async def ingest_image(upload: UploadFile) -> IngestedDocument:
+    max_bytes = settings.max_upload_mb * 1024 * 1024
+    content = await upload.read(max_bytes + 1)
+
+    if not content:
+        raise ValueError("Uploaded image is empty.")
+
+    if len(content) > max_bytes:
+        raise ValueError(
+            f"Image exceeds the {settings.max_upload_mb} MB upload limit."
+        )
+
+    try:
+        with Image.open(BytesIO(content)) as image:
+            if image.format not in {"PNG", "JPEG", "WEBP"}:
+                raise ValueError("Only PNG, JPG, JPEG, and WEBP images are supported.")
+
+            if image.width * image.height > 25_000_000:
+                raise ValueError("Image dimensions are too large.")
+
+            image.load()
+            image = image.convert("RGB")
+            text = pytesseract.image_to_string(image)
+
+    except ValueError:
+        raise
+    except (UnidentifiedImageError, OSError) as exc:
+        raise ValueError("Uploaded file is not a readable image.") from exc
+
+    text = clean_text(text)
+
+    if not text:
+        raise ValueError("No readable text was extracted from this image.")
+
+    if len(text) > settings.max_text_chars:
+        raise ValueError(
+            f"Extracted image text exceeds the "
+            f"{settings.max_text_chars}-character limit."
+        )
+
+    return IngestedDocument("image", text, text[:240])
+
 
 
 async def ingest_url(url: str) -> IngestedDocument:

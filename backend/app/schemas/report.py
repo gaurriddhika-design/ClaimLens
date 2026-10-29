@@ -17,7 +17,7 @@ class ReportResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     report_id: str
-    input_type: Literal["text", "url", "pdf", "demo"]
+    input_type: Literal["text", "url", "pdf", "image" , "demo"]
     input_summary: str
     created_at: datetime
     processing_status: Literal["queued", "processing", "completed", "failed"]

@@ -10,7 +10,15 @@ from ..services.verification_engine import (
     build_verified_report,
     validate_claim_text,
 )
-from ..services.ingestion import IngestedDocument, ingest_pdf, ingest_text, ingest_url
+
+
+from ..services.ingestion import (
+    IngestedDocument,
+    ingest_image,
+    ingest_pdf,
+    ingest_text,
+    ingest_url,
+)
 from ..services.report_service import empty_verdict_counts
 from ..utils.url_safety import UnsafeURLError
 from ..storage.repository import get_report, save_report
@@ -125,3 +133,14 @@ async def retrieve_report(report_id: str) -> ReportResponse:
     if report is None:
         raise HTTPException(status_code=404, detail="Report not found.")
     return report
+
+@router.post("/api/verify/image", response_model=ReportResponse)
+async def submit_image_for_verification(file: UploadFile = File(...)) -> ReportResponse:
+    try:
+        document = await ingest_image(file)
+    except (ValueError, httpx.HTTPError) as exc:
+        raise _map_ingestion_error(exc) from exc
+    finally:
+        await file.close()
+
+    return await _verify_document(document)

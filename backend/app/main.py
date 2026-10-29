@@ -1,14 +1,18 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .api.health import router as health_router
 from .api.verification import router as verification_router
-from .core.config import settings
 from .core.logging import configure_logging
 from .schemas import (
-    AuditEvent, ClaimResult, ConfidenceLevel, ReportResponse, Verdict,
+    AuditEvent,
+    ClaimResult,
+    ConfidenceLevel,
+    ReportResponse,
+    Verdict,
 )
 from .services.report_service import empty_verdict_counts
 from .storage.database import close_database, initialize_database
@@ -32,12 +36,16 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Allow requests from the local React/Vite frontend.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origin_list,
-    allow_credentials=False,
-    allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type", "Authorization"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 app.include_router(health_router)
@@ -46,7 +54,7 @@ app.include_router(verification_router)
 
 @app.post("/api/demo", response_model=ReportResponse, tags=["demo"])
 def demo_report() -> ReportResponse:
-    """Return explicitly labelled static demo data; no providers or sources are called."""
+    """Return explicitly labelled static demo data."""
     now = datetime.now(timezone.utc)
     counts = empty_verdict_counts()
     counts[Verdict.UNVERIFIED] = 1
@@ -70,7 +78,9 @@ def demo_report() -> ReportResponse:
                 verdict=Verdict.UNVERIFIED,
                 explanation="DEMO ONLY: this example was not fact-checked.",
                 confidence_level=ConfidenceLevel.NOT_ASSESSED,
-                limitations=["Static demo data; not a factual assessment."],
+                limitations=[
+                    "Static demo data; not a factual assessment."
+                ],
             )
         ],
         evidence=[],
@@ -78,7 +88,10 @@ def demo_report() -> ReportResponse:
             AuditEvent(
                 event_type="demo_result_generated",
                 occurred_at=now,
-                details="Static mock response returned; no external provider was called.",
+                details=(
+                    "Static mock response returned; "
+                    "no external provider was called."
+                ),
             )
         ],
     )
