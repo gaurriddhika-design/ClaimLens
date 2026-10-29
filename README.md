@@ -100,24 +100,23 @@ python -m pip install -r requirements.txt
 
 ### 4. Configure the API key
 
-The search service requires a Tavily API key.
+Text verification requires the Tavily search provider and API key.
 
-Create a `.env` file in the project root:
+Set these values in the `.env` file in the application's working directory (`backend/.env` when launching from the `backend` directory):
 
 ```env
-TAVILY_API_KEY=your_tavily_api_key
+SEARCH_PROVIDER=tavily
+SEARCH_API_KEY=your_tavily_api_key
 ```
 
-Replace the placeholder with your own API key. Never commit the real `.env` file to GitHub.
-
-Ensure the application loads environment variables before using the search service, if this is not already handled by the implementation.
+For compatibility, `TAVILY_API_KEY` is also accepted when `SEARCH_PROVIDER` is unset. Never commit a real `.env` file to GitHub.
 
 ### 5. Run the tests
 
 Run the complete test suite:
 
 ```bash
-python -m pytest tests/ -v
+python -m pytest tests backend/tests -q
 ```
 
 To test individual components:
@@ -134,7 +133,7 @@ python -m pytest tests/test_verification_service.py -v
 
 ## Testing Status
 
-The complete test suite has successfully passed **107 tests** in the current development environment.
+The complete test suite passed **151 tests** in the current development environment during this integration change.
 
 The tests cover:
 
@@ -145,6 +144,7 @@ The tests cover:
 - Evidence classification and conflicting signals.
 - Verdict generation for different evidence conditions.
 - Verification workflow behavior, including fallback to snippets and empty search results.
+- FastAPI verification integration, report persistence, provider configuration, and PDF/URL intake behavior.
 
 These results confirm that the tested cases pass. They do not establish that every real-world claim will receive a correct verdict.
 
@@ -177,17 +177,9 @@ The exact verdict values and response fields should remain consistent with the i
 
 ## Backend Integration
 
-The verification engine is intended to integrate with the ClaimLens backend.
+Text submissions to `/api/verify` invoke `VerificationService.verify()` through a worker thread, map the engine result to the backend report schema, and persist the report for retrieval by ID. Tavily credentials are passed to the search service without being included in responses or audit events. The health endpoint reports provider configuration separately from whether the engine integration is wired.
 
-The backend integration should define:
-
-- The method used to invoke `VerificationService.verify()`.
-- The request format for submitted claims.
-- The response schema for verdicts, evidence, and source information.
-- Error handling between the backend and verification engine.
-- Report persistence and retrieval using report IDs.
-
-The final request and response formats must be agreed upon with the backend developer before integration is considered complete.
+PDF and URL endpoints currently perform validated intake and persist intake-only reports; they do not invoke the verification engine. Engine verdicts use lexical heuristics, are not definitive fact-checks, and require human review. Unknown engine verdict labels conservatively map to `UNVERIFIED`.
 
 ## Current Limitations
 
@@ -203,11 +195,11 @@ The final request and response formats must be agreed upon with the backend deve
 - Evaluate verdict quality against a labelled set of real-world claims and evidence.
 - Improve source independence and duplicate-source detection.
 - Strengthen URL-fetching security and validation.
-- Integrate the engine with the backend and test the complete verification workflow.
+- Integrate PDF and URL workflows with the engine after defining suitable validation and failure handling.
 - Improve reporting of evidence, source metadata, and uncertainty.
 
 ## Developer
 
-**Role:** Member 3 – AI Verification Engine  
-**Project:** ClaimLens  
+**Role:** Member 3 – AI Verification Engine
+**Project:** ClaimLens
 **Branch:** `feature`

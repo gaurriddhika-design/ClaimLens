@@ -1,5 +1,4 @@
-
-# Python cache files
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
@@ -9,7 +8,7 @@ __pycache__/
 venv/
 env/
 
-# Environment variables and secrets
+# Environment secrets
 .env
 .env.*
 !.env.example
@@ -18,6 +17,15 @@ env/
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Generated build files
+build/
+dist/
 
 # IDE and editor files
 .vscode/

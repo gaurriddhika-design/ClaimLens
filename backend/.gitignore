@@ -1,0 +1,12 @@
+.env
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+claimlens.db
+*.sqlite
+*.sqlite3
+.venv/
+venv/
+dist/
+build/
